@@ -224,5 +224,65 @@ END:VCALENDAR
         self.assertEqual([e["source"] for e in plan["days"]["2026-11-11"]["entries"]], ["(open time)"])
 
 
+class AutofillTest(unittest.TestCase):
+    def entry(self, day, start, hrs, tid, task, desc=""):
+        d = dt.date.fromisoformat(day)
+        s = ts.at(d, start, TZ)
+        return {"start": s, "end": s + dt.timedelta(hours=hrs), "hours": hrs,
+                "task_id": tid, "task": task, "description": desc}
+
+    def test_focus_title_note(self):
+        pats = CFG["calendar"]["focus"]
+        self.assertEqual(ts.focus_title_note(pats, "Focus time (Data Foundation Planning)"), "Data Foundation Planning")
+        self.assertIsNone(ts.focus_title_note(pats, "Focus time"))
+
+    def test_manual_entries_are_kept_and_counted(self):
+        """Hours logged in ClickUp by hand or another tool, with no calendar event, count toward
+        the target, keep their time slot, and are never overwritten."""
+        st = {k: [] for k in STATUS}
+        st["2026-11-12"] = [self.entry("2026-11-12", "13:00", 2.0, "manual", "Manual work"),
+                            self.entry("2026-11-12", "19:00", 1.0, "manual", "Evening work")]  # outside workday
+        plan = ts.build_plan(CFG, DAYS, st, EVENTS, {}, fake_resolve)
+        day = plan["days"]["2026-11-12"]
+        self.assertEqual(day["existing_hours"], 3.0)
+        self.assertEqual(day["total"], 8.0)
+        for e in day["entries"]:  # nothing planned inside the manual 13:00-15:00 block
+            self.assertTrue(e["end"] <= "13:00" or e["start"] >= "15:00", e)
+
+    def test_autofill_resolves_flags_with_fallback(self):
+        st = {k: [] for k in STATUS}
+        plan = ts.autofill_plan(ts.build_plan(CFG, DAYS, st, EVENTS, {}, fake_resolve),
+                                ("top", "Top task", "Main work"))
+        for v in plan["days"].values():
+            self.assertTrue(all(e["flag"] is None and e["task_id"] for e in v["entries"]))
+            self.assertEqual(v["total"], 8.0)
+        thu = plan["days"]["2026-11-12"]["entries"]
+        self.assertIn(("15:00", "16:00", "z8znm1mxep", "Data lake structure"),
+                      [(e["start"], e["end"], e["task_id"], e["description"]) for e in thu])
+        self.assertTrue(any(e.get("auto") and e["task_id"] == "top" for e in thu))
+
+    def test_autofill_without_fallback_leaves_gaps(self):
+        st = {k: [] for k in STATUS}
+        plan = ts.autofill_plan(ts.build_plan(CFG, DAYS, st, EVENTS, {}, fake_resolve), None)
+        self.assertLess(plan["days"]["2026-11-12"]["total"], 8.0)
+        self.assertTrue(all(e["task_id"] for e in plan["days"]["2026-11-12"]["entries"]))
+
+    def test_top_task_skips_rule_tasks(self):
+        st = {"2026-11-09": [self.entry("2026-11-09", "09:00", 3, "meet", "Meetings"),
+                             self.entry("2026-11-09", "12:00", 2, "dev", "Dev", "Building"),
+                             self.entry("2026-11-09", "14:00", 1, "dev", "Dev", "")]}
+        self.assertEqual(ts.top_task(st, {"meet"}), ("dev", "Dev", "Building"))
+        self.assertIsNone(ts.top_task({}, set()))
+
+    def test_idle_days_are_left_alone(self):
+        st = {k: [] for k in STATUS}
+        st["2026-11-10"] = [self.entry("2026-11-10", "09:00", 1, "x", "X")]
+        evs = [{"date": "2026-11-09", "start": "09:00", "end": "17:00", "title": "Holiday", "all_day": True},
+               {"date": "2026-11-11", "start": "10:00", "end": "10:15", "title": "Take a break"},
+               {"date": "2026-11-12", "start": "10:00", "end": "11:00", "title": "Standup"}]
+        got = [d.isoformat() for d in ts.worked_days(DAYS, st, evs, CFG)]
+        self.assertEqual(got, ["2026-11-10", "2026-11-12"])
+
+
 if __name__ == "__main__":
     unittest.main()

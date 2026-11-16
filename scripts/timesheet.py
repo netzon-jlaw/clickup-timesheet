@@ -533,6 +533,16 @@ def any_match(patterns, text):
     return any(re.search(p, text) for p in patterns or [])
 
 
+def focus_title_note(patterns, title):
+    """'Focus time (Data Foundation Planning)' -> 'Data Foundation Planning'; plain 'Focus time' -> None."""
+    for p in patterns or []:
+        m = re.search(p, title)
+        if m:
+            rest = (title[:m.start()] + title[m.end():]).strip(" ()[]-:|")
+            return rest or None
+    return None
+
+
 def build_plan(cfg, days, status, events, focus, resolve) -> dict:
     """resolve(task_ref, date) -> (task_id, task_name) or None."""
     tz = tz_of(cfg)
@@ -580,7 +590,7 @@ def build_plan(cfg, days, status, events, focus, resolve) -> dict:
                 plan["warnings"].append(f"{key} {ev['start']} '{ev['title']}' overlaps another block; not counted")
                 continue
             if any_match(cal.get("focus"), ev["title"]):
-                note = notes.pop(0) if notes else None
+                note = notes.pop(0) if notes else focus_title_note(cal.get("focus"), ev["title"])
                 if note is None:
                     tid, tname, flag, desc = None, None, "focus block: what did you work on?", ev["title"]
                 else:
@@ -649,6 +659,61 @@ def build_plan(cfg, days, status, events, focus, resolve) -> dict:
     return plan
 
 
+def top_task(status: dict, exclude: set):
+    """(task_id, name, description) of the task with the most hours in status, ignoring
+    tasks in exclude (meeting/training/admin rule targets). Description is the one used
+    for most of its hours."""
+    hrs: dict = {}
+    descs: dict = {}
+    for ents in status.values():
+        for e in ents:
+            tid = e.get("task_id")
+            if not tid or tid in exclude:
+                continue
+            hrs[tid] = hrs.get(tid, 0) + e["hours"]
+            k = (tid, e["task"], e["description"])
+            descs[k] = descs.get(k, 0) + e["hours"]
+    if not hrs:
+        return None
+    tid = max(hrs, key=hrs.get)
+    best = max((k for k in descs if k[0] == tid), key=lambda k: (bool(k[2]), descs[k]))
+    return best[0], best[1], best[2] or best[1]
+
+
+def autofill_plan(plan: dict, fallback) -> dict:
+    """Resolve every flagged block without asking: give it the fallback task, or drop it
+    when there is no fallback. Keeps what was guessed in entry["auto"]."""
+    for v in plan["days"].values():
+        out = []
+        for e in v["entries"]:
+            if e["flag"]:
+                if not fallback:
+                    continue
+                e = dict(e, auto=e["flag"], flag=None, task_id=fallback[0], task=fallback[1])
+                if not e["auto"].startswith("unmapped") or not e["description"]:
+                    e["description"] = fallback[2]
+            p = out[-1] if out else None
+            if p and p["end"] == e["start"] and p["task_id"] == e["task_id"] and p["description"] == e["description"]:
+                p["end"], p["hours"] = e["end"], round(p["hours"] + e["hours"], 2)
+                if e["source"] not in p["source"]:
+                    p["source"] += " + " + e["source"]
+                if e.get("auto"):
+                    p["auto"] = p.get("auto") or e["auto"]
+            else:
+                out.append(e)
+        v["entries"] = out
+        v["total"] = round(v["existing_hours"] + sum(e["hours"] for e in out), 2)
+    return plan
+
+
+def worked_days(days, status, events, cfg) -> list[dt.date]:
+    """Days with some sign of work: a ClickUp entry or a timed calendar event that isn't a break.
+    A day with neither (public holiday, leave not on the calendar) is left alone."""
+    ign = cfg.get("calendar", {}).get("ignore")
+    busy = {e["date"] for e in events if not e.get("all_day") and not any_match(ign, e["title"])}
+    return [d for d in days if status.get(d.isoformat()) or d.isoformat() in busy]
+
+
 def print_plan(plan):
     for s in plan["skipped"]:
         why = s.get("reason") or f"already {s['hours']}h"
@@ -700,17 +765,7 @@ def cmd_status(a, cfg):
 
 
 def cmd_calendar(a, cfg):
-    days = week_days(cfg, a.week)
-    src = a.source or cfg.get("calendar", {}).get("source", "graph")
-    if src == "graph":
-        evs = graph_events(cfg, days)
-    elif src == "ics":
-        loc = a.ics or os.environ.get(cfg.get("calendar", {}).get("ics_url_env", "OUTLOOK_ICS_URL"), "")
-        if not loc:
-            sys.exit("No .ics source: pass --ics PATH_OR_URL or set OUTLOOK_ICS_URL.")
-        evs = ics_events(cfg, days, load_ics(loc))
-    else:
-        sys.exit(f"Unknown calendar source {src!r}")
+    evs = load_events(cfg, week_days(cfg, a.week), a.source, a.ics)
     text = json.dumps(evs, indent=2)
     if a.out:
         Path(a.out).write_text(text)
@@ -736,8 +791,10 @@ def cmd_plan(a, cfg):
 
 
 def cmd_apply(a, cfg):
-    cu = ClickUp(cfg)
-    plan = json.loads(Path(a.plan).read_text())
+    apply_plan(ClickUp(cfg), cfg, json.loads(Path(a.plan).read_text()), a.dry_run, a.force)
+
+
+def apply_plan(cu: ClickUp, cfg, plan: dict, dry_run=False, force=False):
     tz = tz_of(cfg)
     bad = [f"{d} {e['start']} {e['source']}: {e['flag'] or 'no task'}"
            for d, v in plan["days"].items() for e in v["entries"] if not e["task_id"]]
@@ -755,18 +812,77 @@ def cmd_apply(a, cfg):
         if abs(have - v["existing_hours"]) > EPS:
             print(f"SKIP {d}: ClickUp changed since the plan was made ({v['existing_hours']}h -> {have:.2f}h). Re-plan.")
             continue
-        if have + add > target + EPS and not a.force:
+        if have + add > target + EPS and not force:
             print(f"SKIP {d}: would reach {have + add:.2f}h (> {target}h). Use --force to allow.")
             continue
         for e in v["entries"]:
             start = at(dt.date.fromisoformat(d), e["start"], tz)
             line = f"{d} {e['start']} {e['hours']:4.2f}h {e['task']} | {e['description']}"
-            if a.dry_run:
+            if dry_run:
                 print("DRY  " + line)
             else:
                 r = cu.create_entry(e["task_id"], start, e["hours"], e["description"])
                 print(f"LOG  {line}  -> {(r.get('data') or {}).get('id', r)}")
-    if not a.dry_run:
+    if not dry_run:
+        print()
+        print_status(cfg, fetch_status(cu, cfg, days))
+
+
+def load_events(cfg, days, source=None, ics=None) -> list[dict]:
+    src = source or cfg.get("calendar", {}).get("source", "graph")
+    if src == "graph":
+        return graph_events(cfg, days)
+    if src == "ics":
+        loc = ics or os.environ.get(cfg.get("calendar", {}).get("ics_url_env", "OUTLOOK_ICS_URL"), "")
+        if not loc:
+            sys.exit("No .ics source: pass --ics PATH_OR_URL or set OUTLOOK_ICS_URL.")
+        return ics_events(cfg, days, load_ics(loc))
+    sys.exit(f"Unknown calendar source {src!r}")
+
+
+def cmd_autofill(a, cfg):
+    """Unattended fill: plan the week, resolve every flag with the week's top task, log it."""
+    cu = ClickUp(cfg)
+    tz = tz_of(cfg)
+    today = dt.datetime.now(tz).date()
+    days = [d for d in week_days(cfg, a.week) if d <= today]
+    if not days:
+        print("No past workdays in that week yet.")
+        return
+    try:
+        events = load_events(cfg, days, a.source, a.ics)
+    except (SystemExit, OSError, urllib.error.URLError) as e:
+        sys.exit(f"Calendar unavailable ({e}); nothing logged. Fix the calendar source and re-run.")
+    status = fetch_status(cu, cfg, days)
+    resolve = make_resolver(cu, cfg)
+    rule_ids = set()
+    for r in cfg["mappings"].get("rule", []):
+        res = resolve(r["task"], days[0]) if isinstance(r["task"], dict) else (r["task"], None)
+        if res:
+            rule_ids.add(res[0])
+    fallback = top_task(status, rule_ids)
+    if not fallback:  # nothing logged yet this week: use last week's main task
+        prev = [d - dt.timedelta(days=7) for d in days]
+        fallback = top_task(fetch_status(cu, cfg, prev), rule_ids)
+    worked = worked_days(days, status, events, cfg)
+    idle = [d.isoformat() for d in days if d not in worked]
+    plan = build_plan(cfg, worked, status, events, parse_focus(a.focus, days), resolve)
+    plan = autofill_plan(plan, fallback)
+    out = Path(a.out or ROOT / ".plans" / f"autofill-{days[0].isoformat()}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(plan, indent=2))
+    print(f"fallback task: {fallback[1]} [{fallback[0]}] | {fallback[2]}" if fallback
+          else "fallback task: none (flagged blocks left unlogged)")
+    for d in idle:
+        print(f"SKIP {d}: no calendar events and no ClickUp entries (holiday or leave?)")
+    print_plan(plan)
+    for d, v in plan["days"].items():
+        for e in v["entries"]:
+            if e.get("auto"):
+                print(f"auto {d} {e['start']}-{e['end']} -> {e['task']} ({e['auto']}; {e['source']})")
+    print()
+    apply_plan(cu, cfg, plan, dry_run=a.dry_run)
+    if a.dry_run:
         print()
         print_status(cfg, fetch_status(cu, cfg, days))
 
@@ -827,6 +943,15 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--force", action="store_true", help="allow a day to go over the target")
     s.set_defaults(fn=cmd_apply)
+
+    s = sub.add_parser("autofill", help="unattended: plan the week so far, auto-resolve flags, and log it")
+    s.add_argument("--week", default="this", help="'this' (default), 'last', or any YYYY-MM-DD in the week")
+    s.add_argument("--source", choices=["graph", "ics"])
+    s.add_argument("--ics", help=".ics file path or URL")
+    s.add_argument("--focus", action="append", help="optional focus notes, as for plan")
+    s.add_argument("-o", "--out", help="where to save the plan JSON (default .plans/autofill-<monday>.json)")
+    s.add_argument("--dry-run", action="store_true", help="plan and report, log nothing")
+    s.set_defaults(fn=cmd_autofill)
 
     s = sub.add_parser("tasks", help="list tasks in the configured lists")
     s.add_argument("list", nargs="*", help="list aliases from config.toml or list IDs")

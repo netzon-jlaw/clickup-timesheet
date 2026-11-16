@@ -3,7 +3,7 @@
 Checks a week of ClickUp hours against an 8h/day target and fills short days from the
 Outlook calendar. A script does the API work. A Claude Code skill
 (`.claude/skills/clickup-timesheet`) handles mapping and confirmation. It never logs anything
-without your OK.
+without your OK. A second skill (`clickup-timesheet-autofill`) is the unattended Friday fill.
 
 ## Use it
 
@@ -21,6 +21,12 @@ python3 scripts/timesheet.py plan --week last --events .plans/events.json \
 python3 scripts/timesheet.py apply .plans/plan.json --dry-run
 python3 scripts/timesheet.py apply .plans/plan.json
 ```
+
+**Unattended fill.** `autofill --week this` plans the week so far and logs it without asking.
+Anything the rules can't place goes to the week's main (non-meeting) task, and those rows are
+reported. Hours already in ClickUp count and are never changed. It skips days with an all-day
+out-of-office event, and days with no calendar events and no entries. Add `--dry-run` to
+preview. The `clickup-timesheet-autofill` skill runs it from a scheduled task every Friday evening.
 
 Other commands: `tasks [list...]` lists task IDs, `create-task --list admin --name "..."`,
 and `ms-login` signs in to Microsoft.
