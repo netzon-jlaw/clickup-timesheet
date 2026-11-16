@@ -351,8 +351,20 @@ def ics_read_events(text: str, default_tz) -> list[dict]:
     return events
 
 
+def nth_weekday(year: int, month: int, n: int, wd: int):
+    """n-th (1-based, negative from the end) weekday wd of a month, or None."""
+    first = dt.date(year, month, 1)
+    days = [first + dt.timedelta(days=i) for i in range(31)
+            if (first + dt.timedelta(days=i)).month == month and (first + dt.timedelta(days=i)).weekday() == wd]
+    try:
+        return days[n - 1] if n > 0 else days[n]
+    except IndexError:
+        return None
+
+
 def rrule_starts(start: dt.datetime, rule: str, until_window: dt.datetime):
-    """Yield occurrence starts for the RRULE subset Outlook emits (DAILY/WEEKLY/MONTHLY by date)."""
+    """Yield occurrence starts for the RRULE subset Outlook emits:
+    DAILY, WEEKLY (BYDAY), MONTHLY and YEARLY (by month day or n-th weekday, e.g. BYDAY=2TU / -1FR)."""
     r = dict(p.split("=", 1) for p in rule.split(";") if "=" in p)
     freq, interval = r.get("FREQ"), int(r.get("INTERVAL", 1))
     count = int(r["COUNT"]) if "COUNT" in r else None
@@ -361,7 +373,11 @@ def rrule_starts(start: dt.datetime, rule: str, until_window: dt.datetime):
         u = ics_parse_dt(r["UNTIL"], {}, start.tzinfo)
         until = dt.datetime.combine(u, dt.time(23, 59), start.tzinfo) if isinstance(u, dt.date) and not isinstance(u, dt.datetime) else u
     ical_days = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
-    byday = [ical_days[d[-2:].upper()] for d in r.get("BYDAY", "").split(",") if d[-2:].upper() in ical_days]
+    byday_raw = [d.upper() for d in r.get("BYDAY", "").split(",") if d[-2:].upper() in ical_days]
+    byday = [ical_days[d[-2:]] for d in byday_raw]
+    nth = [(int(d[:-2] or r.get("BYSETPOS", 0) or 0), ical_days[d[-2:]]) for d in byday_raw]
+    bymonthday = [int(x) for x in r.get("BYMONTHDAY", "").split(",") if x]
+    bymonth = [int(x) for x in r.get("BYMONTH", "").split(",") if x]
     n = 0
 
     def emit(s):
@@ -373,6 +389,18 @@ def rrule_starts(start: dt.datetime, rule: str, until_window: dt.datetime):
         n += 1
         return True
 
+    def month_days(y, m):
+        if nth and any(k for k, _ in nth):
+            ds = [nth_weekday(y, m, k, w) for k, w in nth]
+        else:
+            ds = []
+            for md in (bymonthday or [start.day]):
+                try:
+                    ds.append(dt.date(y, m, md))
+                except ValueError:
+                    pass
+        return sorted(d for d in ds if d)
+
     for i in range(5000):
         if freq == "DAILY":
             cands = [start + dt.timedelta(days=i * interval)]
@@ -380,53 +408,77 @@ def rrule_starts(start: dt.datetime, rule: str, until_window: dt.datetime):
             week0 = start - dt.timedelta(days=start.weekday())
             wk = week0 + dt.timedelta(weeks=i * interval)
             cands = sorted(wk + dt.timedelta(days=d) for d in (byday or [start.weekday()]))
-            cands = [c for c in cands if c >= start]
-        elif freq == "MONTHLY":
-            y, m = divmod(start.month - 1 + i * interval, 12)
-            try:
-                cands = [start.replace(year=start.year + y, month=m + 1)]
-            except ValueError:
-                cands = []
+        elif freq in ("MONTHLY", "YEARLY"):
+            if freq == "MONTHLY":
+                y, m = divmod(start.month - 1 + i * interval, 12)
+                months = [(start.year + y, m + 1)]
+            else:
+                months = [(start.year + i * interval, m) for m in (bymonth or [start.month])]
+            cands = [dt.datetime.combine(d, start.time(), start.tzinfo) for y, m in months for d in month_days(y, m)]
         else:
             cands = [start] if i == 0 else []
         for c in cands:
+            if c < start:
+                continue
             # keep wall-clock time across DST changes
             c = c.replace(tzinfo=start.tzinfo)
             if c > until_window or not emit(c):
                 return
             yield c
-        if freq not in ("DAILY", "WEEKLY", "MONTHLY"):
+        if freq not in ("DAILY", "WEEKLY", "MONTHLY", "YEARLY"):
             return
 
 
 def ics_events(cfg, days: list[dt.date], text: str) -> list[dict]:
+    """Events in the week, in local time. All-day events (holidays, OOO, sick leave) come out once
+    per covered day with all_day=True and the workday as start/end; the planner decides what they mean."""
     tz = tz_of(cfg)
+    wd = cfg["workday"]
     win_start = dt.datetime.combine(days[0], dt.time(), tz)
     win_end = dt.datetime.combine(days[-1] + dt.timedelta(days=1), dt.time(), tz)
     raw = ics_read_events(text, tz)
-    overrides = {(e.get("UID"), e["RECURRENCE-ID"]) for e in raw if "RECURRENCE-ID" in e}
+
+    def as_dt(x):  # all-day values are dates; expand them as local midnight
+        return x if isinstance(x, dt.datetime) else dt.datetime.combine(x, dt.time(), tz)
+
+    overrides = {(e.get("UID"), as_dt(e["RECURRENCE-ID"])) for e in raw if "RECURRENCE-ID" in e}
     out = []
     for e in raw:
         s0 = e.get("DTSTART")
-        if not isinstance(s0, dt.datetime):
-            continue  # all-day or malformed
+        if not isinstance(s0, dt.date):
+            continue  # malformed
         if e.get("STATUS", "").upper() == "CANCELLED":
             continue
-        length = (e["DTEND"] - s0) if isinstance(e.get("DTEND"), dt.datetime) else ics_duration(e.get("DURATION", "PT0M"))
+        all_day = not isinstance(s0, dt.datetime)
+        end0 = e.get("DTEND")
+        if isinstance(end0, dt.date):
+            length = as_dt(end0) - as_dt(s0)
+        else:
+            length = ics_duration(e.get("DURATION", "P1D" if all_day else "PT0M"))
+        s0 = as_dt(s0)
         starts = [s0]
         if "RRULE" in e and "RECURRENCE-ID" not in e:
-            ex = {x for x in e["exdate"] if isinstance(x, dt.datetime)}
+            ex = {as_dt(x) for x in e["exdate"]}
             starts = [s for s in rrule_starts(s0, e["RRULE"], win_end)
                       if s not in ex and (e.get("UID"), s) not in overrides]
+        busy = e.get("X-MICROSOFT-CDO-BUSYSTATUS", "").lower() or None
+        title = e.get("SUMMARY", "(no title)")
         for s in starts:
             en = s + length
             if en <= win_start or s >= win_end:
                 continue
+            if all_day:
+                d = s.date()
+                while d < en.date() or d == s.date():
+                    if days[0] <= d <= days[-1]:
+                        out.append({"date": d.isoformat(), "start": wd["start"], "end": wd["end"],
+                                    "title": title, "show_as": busy, "all_day": True})
+                    d += dt.timedelta(days=1)
+                continue
             ls, le = s.astimezone(tz), en.astimezone(tz)
-            busy = e.get("X-MICROSOFT-CDO-BUSYSTATUS", "").lower() or None
             out.append({"date": ls.date().isoformat(), "start": f"{ls:%H:%M}", "end": f"{le:%H:%M}",
-                        "title": e.get("SUMMARY", "(no title)"), "show_as": busy})
-    out.sort(key=lambda x: (x["date"], x["start"]))
+                        "title": title, "show_as": busy})
+    out.sort(key=lambda x: (x["date"], not x.get("all_day", False), x["start"]))
     return out
 
 
@@ -504,13 +556,19 @@ def build_plan(cfg, days, status, events, focus, resolve) -> dict:
         if have >= target - EPS:
             plan["skipped"].append({"date": key, "hours": round(have, 2)})
             continue
+        all_day = [ev for ev in events if ev["date"] == key and ev.get("all_day")]
+        ooo = [ev for ev in all_day if (ev.get("show_as") or "").lower() == "oof"]
+        if ooo:
+            plan["warnings"].append(f"{key} all-day out of office ('{ooo[0]['title']}'); day not planned")
+            plan["skipped"].append({"date": key, "hours": round(have, 2), "reason": "out of office"})
+            continue
         ws, we = at(day, wd["start"], tz), at(day, wd["end"], tz)
         occupied = [(max(e["start"], ws), min(e["end"], we)) for e in existing if e["end"] > ws and e["start"] < we]
         segs = []
         notes = list(focus.get(key, []))
         day_events = []
         for ev in events:
-            if ev["date"] != key or any_match(cal.get("ignore"), ev["title"]):
+            if ev["date"] != key or ev.get("all_day") or any_match(cal.get("ignore"), ev["title"]):
                 continue
             s, e = max(at(day, ev["start"], tz), ws), min(at(day, ev["end"], tz), we)
             if e > s:
@@ -593,7 +651,8 @@ def build_plan(cfg, days, status, events, focus, resolve) -> dict:
 
 def print_plan(plan):
     for s in plan["skipped"]:
-        print(f"OK  {s['date']}: already {s['hours']}h, skipped")
+        why = s.get("reason") or f"already {s['hours']}h"
+        print(f"OK  {s['date']}: {why}, skipped")
     for day, d in plan["days"].items():
         name = dt.date.fromisoformat(day).strftime("%a")
         print(f"\n{name} {day}  (existing {d['existing_hours']}h -> {d['total']}h)")

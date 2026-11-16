@@ -140,8 +140,87 @@ class IcsTest(unittest.TestCase):
             ("2026-11-11", "09:15", "09:30", "Netzon Infra"),
             ("2026-11-12", "10:00", "10:15", "Netzon Infra (moved)"),
             ("2026-11-12", "16:00", "16:45", "Netzon Data Foundation, weekly"),
+            ("2026-11-13", "09:00", "17:00", "Holiday"),  # all-day, flagged all_day=True
             ("2026-11-13", "09:15", "09:30", "Netzon Infra"),
         ])
+
+
+    def test_real_world_rules(self):
+        """Patterns seen in a published Outlook feed: Paris-time event, weekly series with EXDATE
+        and a moved occurrence, nth-weekday monthly, yearly, multi-day and recurring all-day."""
+        ics = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:standup
+SUMMARY:Team Standup
+DTSTART;TZID=Singapore Standard Time:20261001T101500
+DTEND;TZID=Singapore Standard Time:20261001T103000
+RRULE:FREQ=WEEKLY;UNTIL=20261218T021500Z;INTERVAL=1;BYDAY=MO,TU,TH,FR;WKST=SU
+EXDATE;TZID=Singapore Standard Time:20261103T101500,20261110T101500
+X-MICROSOFT-CDO-BUSYSTATUS:BUSY
+END:VEVENT
+BEGIN:VEVENT
+UID:standup
+RECURRENCE-ID;TZID=Singapore Standard Time:20261113T101500
+SUMMARY:Team Standup
+DTSTART;TZID=Singapore Standard Time:20261113T110000
+DTEND;TZID=Singapore Standard Time:20261113T111500
+END:VEVENT
+BEGIN:VEVENT
+UID:paris
+SUMMARY:Project sync
+DTSTART;TZID=Romance Standard Time:20261112T090000
+DTEND;TZID=Romance Standard Time:20261112T100000
+END:VEVENT
+BEGIN:VEVENT
+UID:monthly
+SUMMARY:Monthly review
+DTSTART;TZID=Singapore Standard Time:20260908T150000
+DTEND;TZID=Singapore Standard Time:20260908T160000
+RRULE:FREQ=MONTHLY;UNTIL=20271231T000000Z;INTERVAL=1;BYDAY=2TU
+END:VEVENT
+BEGIN:VEVENT
+UID:yearly
+SUMMARY:Renewal
+DTSTART;VALUE=DATE:20251110
+DTEND;VALUE=DATE:20251111
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=2MO;BYMONTH=11
+X-MICROSOFT-CDO-BUSYSTATUS:FREE
+END:VEVENT
+BEGIN:VEVENT
+UID:nomeet
+SUMMARY:No-meeting day
+DTSTART;VALUE=DATE:20261014
+DTEND;VALUE=DATE:20261015
+RRULE:FREQ=WEEKLY;UNTIL=20261231T000000Z;INTERVAL=2;BYDAY=WE;WKST=SU
+X-MICROSOFT-CDO-BUSYSTATUS:FREE
+END:VEVENT
+BEGIN:VEVENT
+UID:sick
+SUMMARY:OOO - Sick Leave
+DTSTART;VALUE=DATE:20261112
+DTEND;VALUE=DATE:20261114
+X-MICROSOFT-CDO-BUSYSTATUS:OOF
+END:VEVENT
+END:VCALENDAR
+"""
+        evs = ts.ics_events(CFG, DAYS, ics)
+        got = [(e["date"], e["start"], e["end"], e["title"], e.get("all_day", False)) for e in evs]
+        self.assertEqual(got, [
+            ("2026-11-09", "09:00", "17:00", "Renewal", True),
+            ("2026-11-09", "10:15", "10:30", "Team Standup", False),
+            ("2026-11-10", "15:00", "16:00", "Monthly review", False),
+            ("2026-11-11", "09:00", "17:00", "No-meeting day", True),
+            ("2026-11-12", "09:00", "17:00", "OOO - Sick Leave", True),
+            ("2026-11-12", "10:15", "10:30", "Team Standup", False),
+            ("2026-11-12", "16:00", "17:00", "Project sync", False),
+            ("2026-11-13", "09:00", "17:00", "OOO - Sick Leave", True),
+            ("2026-11-13", "11:00", "11:15", "Team Standup", False),
+        ])
+        # all-day OOO days are not planned; other all-day events don't become work blocks
+        st = {k: [] for k in STATUS}
+        plan = ts.build_plan(CFG, DAYS, st, evs, {}, fake_resolve)
+        self.assertEqual({s["date"] for s in plan["skipped"]}, {"2026-11-12", "2026-11-13"})
+        self.assertEqual([e["source"] for e in plan["days"]["2026-11-11"]["entries"]], ["(open time)"])
 
 
 if __name__ == "__main__":
