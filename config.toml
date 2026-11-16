@@ -1,0 +1,34 @@
+# ClickUp timesheet settings. Secrets live in environment variables, never here.
+
+[clickup]
+team_id = "7513193"        # Netzon workspace
+user_id = 37717424
+billable = false
+
+[workday]
+timezone = "Asia/Manila"
+start = "09:00"
+end = "17:00"
+target_hours = 8
+days = [0, 1, 2, 3, 4]     # Mon..Fri
+
+# Short names for ClickUp lists, usable anywhere a list ID is expected.
+[lists]
+internal = "1100600000008211"     # Netzon > Internal Projects
+trainings = "1100600000008423"    # Netzon > Trainings
+admin = "1100600000008425"        # Netzon > Administrative work
+data_foundation = "1100600000008807"  # Data Foundation > Management
+orbit = "1100600000009145"        # ORBIT | Field Capability > Management
+
+[calendar]
+source = "graph"                  # graph | ics
+ics_url_env = "OUTLOOK_ICS_URL"
+focus = ['(?i)^focus time']       # blocks whose task comes from --focus notes
+ignore = ['(?i)^take a break', '(?i)^lunch']  # absorbed into open time
+
+[gaps]
+# How to fill time with no calendar event:
+#   "focus"     -> the day's main focus task
+#   "task:<id>" -> a fixed task (set desc below)
+#   "none"      -> leave it for the user to decide
+fill = "focus"

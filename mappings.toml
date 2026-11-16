@@ -1,0 +1,50 @@
+# Calendar event -> ClickUp task rules. The skill adds to this file as you answer questions.
+#
+# [[rule]]  matches a calendar event title (regex, first match wins).
+# [[focus]] matches the note you give for a focus block (--focus "thu=PMO integration").
+# task = "<task id>"  or  { list = "<alias or list id>", name = "<task name>" }
+#   The name may use {month} and {year}, e.g. "{month} Hours" -> "November Hours".
+# desc = optional fixed description; default is the event title / focus note.
+
+[[rule]]
+match = '(?i)netzon infra'
+task = "z8znm1pg7e"              # Internal Projects > Infra Meeting
+desc = "Netzon Infra meeting"
+
+[[rule]]
+match = '(?i)aws partner'
+task = "z8znm1qrde"              # Trainings > AWS Training Management
+desc = "AWS Partner meeting"
+
+[[rule]]
+match = '(?i)data lake|data foundation'
+task = "z8znm1pg9x"              # Internal Projects > Data Foundation Meeting
+
+[[rule]]
+match = '(?i)learning time'
+task = { list = "trainings", name = "{month} Hours" }   # Trainings > November Hours, etc.
+desc = "Learning time"
+
+[[rule]]
+match = '(?i)eset|catch up|it support'
+task = "z8znm1qrdf"              # Administrative work > IT Support
+
+[[rule]]
+match = '(?i)leads meeting'
+task = "z8znm1nhvy"              # Administrative work > Leads Meeting
+
+[[rule]]
+match = '(?i)software delivery capabilit'
+task = "z8znm1nm3g"              # Administrative work > Netzon Software Delivery Capabilities Meeting
+
+[[rule]]
+match = '(?i)1:1.*management|management.*1:1'
+task = "z8znm1nk9t"              # Administrative work > 1:1 Netzon Management Meeting
+
+[[focus]]
+match = '(?i)pmo integration|sdlc'
+task = "z8znm1nk9u"              # Internal Projects > Netzon SDLC Tooling
+
+[[focus]]
+match = '(?i)data foundation'
+task = "z8znm1pg8h"              # Internal Projects > Data Foundation
