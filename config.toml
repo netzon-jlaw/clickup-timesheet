@@ -26,7 +26,7 @@ ai_readiness = "1100600000008823" # AI Readiness Program > Management
 source = "ics"                    # graph | ics  (graph waits on admin approval)
 ics_url_env = "OUTLOOK_ICS_URL"
 focus = ['(?i)^focus time']       # blocks whose task comes from --focus notes
-ignore = ['(?i)^take a break', '(?i)^lunch']  # absorbed into open time
+ignore = ['(?i)^take a break', '(?i)^lunch', '(?i)^cancell?ed:']  # absorbed into open time
 
 [gaps]
 # How to fill time with no calendar event:
