@@ -19,6 +19,8 @@ trainings = "1100600000008423"    # Netzon > Trainings
 admin = "1100600000008425"        # Netzon > Administrative work
 data_foundation = "1100600000008807"  # Data Foundation > Management
 orbit = "1100600000009145"        # ORBIT | Field Capability > Management
+aws_partner = "1100600000008815"  # AWS Partner Initiative > Management
+ai_readiness = "1100600000008823" # AI Readiness Program > Management
 
 [calendar]
 source = "ics"                    # graph | ics  (graph waits on admin approval)
