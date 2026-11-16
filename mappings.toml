@@ -18,7 +18,11 @@ desc = "AWS Partner meeting"
 
 [[rule]]
 match = '(?i)data lake|data foundation'
-task = "z8znm1pg9x"              # Internal Projects > Data Foundation Meeting
+task = "z8znm1mxep"              # Data Foundation > Management > Internal Meetings
+
+[[rule]]
+match = '(?i)^orbit|field capability'
+task = "z8znm1p9fy"              # ORBIT | Field Capability > Management > Internal Meetings
 
 [[rule]]
 match = '(?i)learning time'
@@ -46,5 +50,9 @@ match = '(?i)pmo integration|sdlc'
 task = "z8znm1nk9u"              # Internal Projects > Netzon SDLC Tooling
 
 [[focus]]
+match = '(?i)orbit.*planning|field capability.*planning'
+task = "z8znm1njte"              # ORBIT | Field Capability > Management > Project Planning
+
+[[focus]]
 match = '(?i)data foundation'
-task = "z8znm1pg8h"              # Internal Projects > Data Foundation
+task = { list = "data_foundation", name = "Project Planning" }   # Data Foundation > Management > Project Planning
