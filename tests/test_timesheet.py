@@ -64,7 +64,7 @@ class PlanTest(unittest.TestCase):
             ("09:00", "09:15", "z8znm1nk9u", "PMO integration"),
             ("09:15", "09:30", "z8znm1pg7e", "Netzon Infra meeting"),
             ("09:30", "10:30", "z8znm1nk9u", "PMO integration"),
-            ("10:30", "10:45", "z8znm1qrde", "AWS Partner meeting"),
+            ("10:30", "10:45", "z8znm1mxfm", "AWS Partner meeting"),
             ("10:45", "15:00", "z8znm1nk9u", "PMO integration"),
             ("15:00", "16:00", "z8znm1mxep", "Data lake structure"),
             ("16:00", "16:45", "z8znm1mxep", "Netzon Data Foundation"),
@@ -74,12 +74,12 @@ class PlanTest(unittest.TestCase):
 
     def test_friday_matches_hand_logged(self):
         self.assertEqual(rows(self.plan, "2026-11-13"), [
-            ("09:00", "09:15", "data_foundation/Project Planning", "Data Foundation planning"),
+            ("09:00", "09:15", "z8znm1qt4z", "Data Foundation planning"),
             ("09:15", "09:30", "z8znm1pg7e", "Netzon Infra meeting"),
             ("09:30", "11:00", "z8znm1kc3d", "Learning time"),
-            ("11:00", "12:30", "data_foundation/Project Planning", "Data Foundation planning"),
+            ("11:00", "12:30", "z8znm1qt4z", "Data Foundation planning"),
             ("12:30", "13:00", "z8znm1qrdf", "Uninstall ESET AV"),
-            ("13:00", "16:30", "data_foundation/Project Planning", "Data Foundation planning"),
+            ("13:00", "16:30", "z8znm1qt4z", "Data Foundation planning"),
             ("16:30", "17:00", "z8znm1qrdf", "Catch up on messages"),
         ])
         self.assertTrue(all(e["flag"] is None for e in self.plan["days"]["2026-11-13"]["entries"]))

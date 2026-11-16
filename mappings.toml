@@ -13,8 +13,16 @@ desc = "Netzon Infra meeting"
 
 [[rule]]
 match = '(?i)aws partner'
-task = "z8znm1qrde"              # Trainings > AWS Training Management
+task = "z8znm1mxfm"              # AWS Partner Initiative > Management > Internal Meetings
 desc = "AWS Partner meeting"
+
+[[rule]]
+match = '(?i)ai readiness.*self-assess'
+task = "z8znm1n7ah"              # AI Readiness Program > Management > Self-Assessments
+
+[[rule]]
+match = '(?i)ai readiness'
+task = "z8znm1mxga"              # AI Readiness Program > Management > Internal Meetings
 
 [[rule]]
 match = '(?i)data lake|data foundation'
@@ -54,5 +62,13 @@ match = '(?i)orbit.*planning|field capability.*planning'
 task = "z8znm1njte"              # ORBIT | Field Capability > Management > Project Planning
 
 [[focus]]
+match = '(?i)aws partner'
+task = "z8znm1qt5r"              # AWS Partner Initiative > Management > Project Planning
+
+[[focus]]
+match = '(?i)ai readiness'
+task = "z8znm1qt5t"              # AI Readiness Program > Management > Project Planning
+
+[[focus]]
 match = '(?i)data foundation'
-task = { list = "data_foundation", name = "Project Planning" }   # Data Foundation > Management > Project Planning
+task = "z8znm1qt4z"              # Data Foundation > Management > Project Planning
