@@ -21,7 +21,7 @@ data_foundation = "1100600000008807"  # Data Foundation > Management
 orbit = "1100600000009145"        # ORBIT | Field Capability > Management
 
 [calendar]
-source = "graph"                  # graph | ics
+source = "ics"                    # graph | ics  (graph waits on admin approval)
 ics_url_env = "OUTLOOK_ICS_URL"
 focus = ['(?i)^focus time']       # blocks whose task comes from --focus notes
 ignore = ['(?i)^take a break', '(?i)^lunch']  # absorbed into open time
